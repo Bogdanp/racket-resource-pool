@@ -18,13 +18,14 @@
        (5 . ,(gen:const `(release)))
        (5 . ,(gen:let ([timeout gen:timeout])
                (gen:const `(release-after ,timeout))))
+       (1 . ,(gen:const `(expire)))
        (1 . ,(gen:const `(close))))))
 
   (define gen:commands
     (gen:let ([commands (gen:list gen:command)])
       (append commands '((close)))))
 
-  (struct state (p size stack thds pending closed?)
+  (struct state (p size ttl stack thds pending expired closed?)
     #:transparent)
 
   (define (box-update b f)
@@ -45,7 +46,7 @@
              (channel-put ch 'done)))))))
 
   (define/match (interp s c)
-    [((state p size stack _ pending closed?)
+    [((state p size _ stack _ pending expired closed?)
       '(take))
      (cond
        [closed?
@@ -62,9 +63,11 @@
         (define r (pool-take! p 100))
         (when (< taken size)
           (check-not-false r))
+        (when r
+          (check-false (memq r expired)))
         (struct-copy state s [stack (if r (cons r stack) stack)])])]
 
-    [((state p _ _ thds pending closed?)
+    [((state p _ _ _ thds pending expired closed?)
       `(take/timeout ,timeout))
      (cond
        [closed?
@@ -85,10 +88,11 @@
                              (when r
                                (sync (system-idle-evt))
                                (check-false (memq r (unbox pending)))
+                               (check-false (memq r expired))
                                (pool-release! p r)))
                             thds)])])]
 
-    [((state p _ stack _ _ closed?)
+    [((state p _ _ stack _ _ _ closed?)
       '(release))
      (cond
        [(null? stack)
@@ -104,7 +108,7 @@
         (pool-release! p (car stack))
         (struct-copy state s [stack (cdr stack)])])]
 
-    [((state p _ stack thds pending closed?)
+    [((state p _ _ stack thds pending _ closed?)
       `(release-after ,timeout))
      (cond
        [(null? stack)
@@ -133,7 +137,28 @@
                                                    (remq v vs))))
                             thds)])])]
 
-    [((state p _ stack thds pending closed?)
+    [((state p _ ttl stack _ _ expired closed?)
+      '(expire))
+     (cond
+       [(null? stack)
+        (begin0 s
+          (check-exn
+           (if closed?
+               #rx"target thread is not running"
+               #rx"never leased")
+           (lambda ()
+             (pool-release! p (gensym)))))]
+
+       [else
+        (define v (car stack))
+        (pool-release! p v)
+        (sync (alarm-evt (+ (current-inexact-milliseconds) ttl)))
+        (sync (system-idle-evt))
+        (struct-copy state s
+                     [stack (cdr stack)]
+                     [expired (cons v expired)])])]
+
+    [((state p _ _ stack thds pending _ closed?)
       '(close))
      (for ([ch (in-list thds)])
        (define maybe-exn (sync ch))
@@ -162,29 +187,32 @@
            (lambda ()
              (pool-close! p))))])])
 
-  (define (interp* size cs)
+  (define (interp* size ttl cs)
     (define p
       (make-pool
        #:max-size size
+       #:idle-ttl ttl
        (let ([seq (box 0)])
          (lambda ()
            (box-update seq add1)))))
-    (for/fold ([s (state p size null null (box null) #f)])
+    (for/fold ([s (state p size ttl null null (box null) null #f)])
               ([c (in-list cs)])
       (interp s c)))
 
-  (run-tests
-   (test-suite
-    "data/pool"
+  (parameterize ([current-idle-timeout-slack 0])
+    (run-tests
+     (test-suite
+      "data/pool"
 
-    (test-case "sync access"
-      (define-property prop:sync
-        ([size (gen:integer-in 1 8)]
-         [commands gen:commands])
-        (interp* size commands))
+      (test-case "sync access"
+        (define-property prop:sync
+          ([size (gen:integer-in 1 8)]
+           [idle-ttl (gen:integer-in 50 100)]
+           [commands gen:commands])
+          (interp* size idle-ttl commands))
 
-      (check-property
-       (make-config
-        #:tests 50
-        #:deadline (+ (current-inexact-milliseconds) (* 600 1000)))
-       prop:sync)))))
+        (check-property
+         (make-config
+          #:tests 100
+          #:deadline (+ (current-inexact-milliseconds) (* 1800 1000)))
+         prop:sync))))))
