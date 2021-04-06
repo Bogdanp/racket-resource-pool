@@ -11,13 +11,18 @@
  pool-take!
  pool-release!
  pool-close!
- call-with-pool-resource)
+ call-with-pool-resource
+
+ current-idle-timeout-slack)
 
 (define-logger resource-pool)
 
 (struct exn:fail:pool exn:fail ())
 
 (struct pool (custodian mgr))
+
+(define current-idle-timeout-slack
+  (make-parameter (* 15 1000)))
 
 (define/contract (make-pool make-resource
                             [destroy-resource void]
@@ -35,6 +40,7 @@
 (define (make-mgr make-resource destroy-resource max-size idle-ttl)
   (thread
    (lambda ()
+     (define slack (current-idle-timeout-slack))
      (define deadlines (make-hasheq))
      (define (reset-deadline! r)
        (hash-set! deadlines r (+ (current-inexact-milliseconds) idle-ttl)))
@@ -48,7 +54,7 @@
        (define idle-timeout-evt
          (if (hash-empty? deadlines)
              never-evt
-             (alarm-evt (+ (apply min (hash-values deadlines)) (* 60 1000)))))
+             (alarm-evt (+ (apply min (hash-values deadlines)) slack))))
 
        (sync
         (handle-evt
