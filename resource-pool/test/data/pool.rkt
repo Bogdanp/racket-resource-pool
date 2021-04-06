@@ -152,7 +152,8 @@
        [else
         (define v (car stack))
         (pool-release! p v)
-        (sync (alarm-evt (+ (current-inexact-milliseconds) ttl)))
+        (sync (alarm-evt (+ (current-inexact-milliseconds)
+                            (* 2 ttl))))
         (sync (system-idle-evt))
         (struct-copy state s
                      [stack (cdr stack)]
