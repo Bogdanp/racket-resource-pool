@@ -52,7 +52,7 @@
        [closed?
         (begin0 s
           (check-exn
-           #rx"target thread is not running"
+           #rx"pool closed"
            (lambda ()
              (pool-release! p (gensym)))))]
 
@@ -75,7 +75,7 @@
                      [thds (cons
                             (thd
                              (check-exn
-                              #rx"target thread is not running"
+                              #rx"pool closed"
                               (lambda ()
                                 (pool-take! p timeout))))
                             thds)])]
@@ -99,7 +99,7 @@
         (begin0 s
           (check-exn
            (if closed?
-               #rx"target thread is not running"
+               #rx"pool closed"
                #rx"never leased")
            (lambda ()
              (pool-release! p (gensym)))))]
@@ -116,7 +116,7 @@
                                     (thd
                                      (check-exn
                                       (if closed?
-                                          #rx"target thread is not running"
+                                          #rx"pool closed"
                                           #rx"never leased")
                                       (lambda ()
                                         (sleep (/ timeout 1000.0))
@@ -144,7 +144,7 @@
         (begin0 s
           (check-exn
            (if closed?
-               #rx"target thread is not running"
+               #rx"pool closed"
                #rx"never leased")
            (lambda ()
              (pool-release! p (gensym)))))]
@@ -170,7 +170,7 @@
        [closed?
         (begin0 (struct-copy state s [thds null])
           (check-exn
-           #rx"target thread is not running"
+           #rx"pool closed"
            (lambda ()
              (pool-close! p))))]
 
@@ -214,6 +214,6 @@
 
         (check-property
          (make-config
-          #:tests 100
+          #:tests 50
           #:deadline (+ (current-inexact-milliseconds) (* 1800 1000)))
          prop:sync))))))
