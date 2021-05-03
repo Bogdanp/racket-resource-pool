@@ -1,6 +1,8 @@
 #lang racket/base
 
-(require racket/contract
+(require (for-syntax racket/base
+                     syntax/parse)
+         racket/contract
          racket/match)
 
 (provide
@@ -19,12 +21,12 @@
 
 (struct exn:fail:pool exn:fail ())
 
-(struct pool (req-ch mgr [closed? #:mutable]))
+(struct pool (req-ch mgr))
 
-(struct req (nack-evt res-ch))
-(struct lease-req req ())
-(struct release-req req (r))
-(struct close-req req ())
+(struct Req (nack-evt res-ch))
+(struct Lease Req ())
+(struct Release Req (r))
+(struct Close Req ())
 
 (define (oops msg . args)
   (exn:fail:pool
@@ -45,7 +47,7 @@
        pool?)
   (define req-ch (make-channel))
   (define mgr (make-mgr req-ch make-resource destroy-resource max-size idle-ttl))
-  (pool req-ch mgr #f))
+  (pool req-ch mgr))
 
 (define (make-mgr req-ch make-resource destroy-resource max-size idle-ttl)
   (thread/suspend-to-kill
@@ -57,7 +59,8 @@
      (define (remove-deadline! r)
        (hash-remove! deadlines r))
 
-     (let loop ([total 0]
+     (let loop ([closed? #f]
+                [total 0]
                 [idle null]
                 [busy null]
                 [requests null])
@@ -72,24 +75,24 @@
          req-ch
          (match-lambda
            [`(lease ,nack-evt ,res-ch)
-            (define req (lease-req nack-evt res-ch))
+            (define req (Lease nack-evt res-ch))
             (cond
               [(and (null? idle) (< total max-size))
                (define r (make-resource))
                (reset-deadline! r)
                (log-resource-pool-debug "created ~e" r)
-               (loop (add1 total) (cons r idle) busy (cons req requests))]
+               (loop closed? (add1 total) (cons r idle) busy (cons req requests))]
 
               [else
-               (loop total idle busy (cons req requests))])]
+               (loop closed? total idle busy (cons req requests))])]
 
            [`(release ,r ,nack-evt ,res-ch)
-            (define req (release-req nack-evt res-ch r))
-            (loop total idle busy (cons req requests))]
+            (define req (Release nack-evt res-ch r))
+            (loop closed? total idle busy (cons req requests))]
 
            [`(close ,nack-evt ,res-ch)
-            (define req (close-req nack-evt res-ch))
-            (loop total idle busy (cons req requests))]))
+            (define req (Close nack-evt res-ch))
+            (loop closed? total idle busy (cons req requests))]))
 
         (handle-evt
          idle-timeout-evt
@@ -110,12 +113,19 @@
                  [else
                   (values (cons r idle*) n-destroyed)])))
            (log-resource-pool-debug "destroyed ~s idle resource(s)" n-destroyed)
-           (loop (- total n-destroyed) idle* busy requests)))
+           (loop closed? (- total n-destroyed) idle* busy requests)))
 
         (append
          (for/list ([req (in-list requests)])
            (match req
-             [(lease-req _ res-ch)
+             [(Req _ res-ch)
+              #:when closed?
+              (handle-evt
+               (channel-put-evt res-ch (oops "pool closed"))
+               (lambda (_)
+                 (loop closed? total idle busy (remq req requests))))]
+
+             [(Lease _ res-ch)
               (cond
                 [(null? idle) never-evt]
                 [else
@@ -125,9 +135,9 @@
                   (lambda (_)
                     (remove-deadline! r)
                     (log-resource-pool-debug "leased ~e" r)
-                    (loop total (cdr idle) (cons r busy) (remq req requests))))])]
+                    (loop closed? total (cdr idle) (cons r busy) (remq req requests))))])]
 
-             [(release-req _ res-ch r)
+             [(Release _ res-ch r)
               (cond
                 [(memq r busy)
                  (handle-evt
@@ -135,15 +145,15 @@
                   (lambda (_)
                     (reset-deadline! r)
                     (log-resource-pool-debug "released ~e" r)
-                    (loop total (cons r idle) (remq r busy) (remq req requests))))]
+                    (loop closed? total (cons r idle) (remq r busy) (remq req requests))))]
 
                 [else
                  (handle-evt
                   (channel-put-evt res-ch (oops "released resource was never leased: ~e" r))
                   (lambda (_)
-                    (loop total idle busy (remq req requests))))])]
+                    (loop closed? total idle busy (remq req requests))))])]
 
-             [(close-req _ res-ch)
+             [(Close _ res-ch)
               (cond
                 [(null? busy)
                  (handle-evt
@@ -151,18 +161,18 @@
                   (lambda (_)
                     (log-resource-pool-debug "destroying all idle resources")
                     (for-each destroy-resource idle)
-                    (log-resource-pool-debug "stopping resource pool manager")))]
+                    (loop #t 0 null null null)))]
 
                 [else
                  (handle-evt
                   (channel-put-evt res-ch (oops "attempted to close pool without releasing all the resources"))
                   (lambda (_)
-                    (loop total idle busy (remq req requests))))])]))
+                    (loop closed? total idle busy (remq req requests))))])]))
          (for/list ([req (in-list requests)])
            (handle-evt
-            (req-nack-evt req)
+            (Req-nack-evt req)
             (lambda (_)
-              (loop total idle busy (remq req requests)))))))))))
+              (loop closed? total idle busy (remq req requests)))))))))))
 
 (define/contract (call-with-pool-resource p f #:timeout [timeout #f])
   (->* (pool? (-> any/c any))
@@ -179,38 +189,37 @@
     (lambda ()
       (pool-release! p r))))
 
-(define/contract (pool-take! p [timeout #f])
+(define/contract (pool-take! p [t #f])
   (->* (pool?) ((or/c #f exact-nonnegative-integer?)) (or/c #f any/c))
-  (sync
-   (pool-evt p 'lease)
-   (if timeout
-       (handle-evt
-        (alarm-evt (+ (current-inexact-milliseconds) timeout))
-        (lambda (_) #f))
-       never-evt)))
+  (dispatch p lease #:timeout t))
 
 (define/contract (pool-release! p r)
   (-> pool? any/c void?)
-  (sync
-   (wrap-evt
-    (pool-evt p 'release r)
-    (lambda (e)
-      (when (exn:fail? e)
-        (raise e))))))
+  (void (dispatch p release r)))
 
 (define/contract (pool-close! p)
   (-> pool? void?)
-  (sync
-   (wrap-evt
-    (pool-evt p 'close)
-    (lambda (e)
-      (when (exn:fail? e)
-        (raise e))
-      (set-pool-closed?! p #t)))))
+  (void (dispatch p close)))
+
+(define-syntax (dispatch stx)
+  (syntax-parse stx
+    [(_ p id (~optional (~seq #:timeout timeout)) arg ...)
+     #'(dispatch* p 'id (~? timeout #f) arg ...)]))
+
+(define (dispatch* p id timeout . args)
+  (define res-or-exn
+    (sync
+     (apply pool-evt p id args)
+     (if timeout
+         (wrap-evt
+          (alarm-evt (+ (current-inexact-milliseconds) timeout))
+          (λ (_) #f))
+         never-evt)))
+  (begin0 res-or-exn
+    (when (exn:fail:pool? res-or-exn)
+      (raise res-or-exn))))
 
 (define (pool-evt p id . args)
-  (when (pool-closed? p)
-    (raise (oops "pool closed")))
   (nack-guard-evt
    (lambda (nack-evt)
      (define res-ch (make-channel))
