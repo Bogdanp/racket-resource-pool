@@ -4,7 +4,7 @@
 (define collection 'multi)
 (define deps '("base"
                "resource-pool-lib"))
-(define build-deps '("rackcheck"
+(define build-deps '("rackcheck-lib"
                      "racket-doc"
                      "rackunit-lib"
                      "resource-pool-lib"
