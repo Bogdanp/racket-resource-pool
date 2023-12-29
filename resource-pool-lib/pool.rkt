@@ -1,21 +1,26 @@
 #lang racket/base
 
 (require (for-syntax racket/base
-                     syntax/parse)
-         racket/contract
+                     syntax/parse/pre)
+         racket/contract/base
          racket/match)
 
 (provide
- exn:fail:pool?
-
- pool?
- make-pool
- pool-take!
- pool-release!
- pool-close!
- call-with-pool-resource
-
- current-idle-timeout-slack)
+ (contract-out
+  [exn:fail:pool? (-> any/c boolean?)]
+  [pool? (-> any/c boolean?)]
+  [make-pool (->* ((-> any/c))
+                  ((-> any/c void?)
+                   #:max-size exact-positive-integer?
+                   #:idle-ttl (or/c +inf.0 exact-positive-integer?))
+                  pool?)]
+  [pool-take! (->* (pool?) ((or/c #f exact-nonnegative-integer?)) (or/c #f any/c))]
+  [pool-release! (-> pool? any/c void?)]
+  [pool-close! (-> pool? void?)]
+  [call-with-pool-resource (->* (pool? (-> any/c any))
+                                (#:timeout (or/c #f exact-nonnegative-integer?))
+                                any)]
+  [current-idle-timeout-slack (parameter/c real?)]))
 
 (define-logger resource-pool)
 
@@ -36,15 +41,10 @@
 (define current-idle-timeout-slack
   (make-parameter (* 15 1000)))
 
-(define/contract (make-pool make-resource
-                            [destroy-resource void]
-                            #:max-size [max-size 8]
-                            #:idle-ttl [idle-ttl (* 3600 1000)])
-  (->* ((-> any/c))
-       ((-> any/c void?)
-        #:max-size exact-positive-integer?
-        #:idle-ttl (or/c +inf.0 exact-positive-integer?))
-       pool?)
+(define (make-pool make-resource
+                   [destroy-resource void]
+                   #:max-size [max-size 8]
+                   #:idle-ttl [idle-ttl (* 3600 1000)])
   (define req-ch (make-channel))
   (define mgr (make-mgr req-ch make-resource destroy-resource max-size idle-ttl))
   (pool req-ch mgr))
@@ -174,10 +174,7 @@
             (lambda (_)
               (loop closed? total idle busy (remq req requests)))))))))))
 
-(define/contract (call-with-pool-resource p f #:timeout [timeout #f])
-  (->* (pool? (-> any/c any))
-       (#:timeout (or/c #f exact-nonnegative-integer?))
-       any)
+(define (call-with-pool-resource p f #:timeout [timeout #f])
   (define r #f)
   (dynamic-wind
     (lambda ()
@@ -189,16 +186,13 @@
     (lambda ()
       (pool-release! p r))))
 
-(define/contract (pool-take! p [t #f])
-  (->* (pool?) ((or/c #f exact-nonnegative-integer?)) (or/c #f any/c))
+(define (pool-take! p [t #f])
   (dispatch p lease #:timeout t))
 
-(define/contract (pool-release! p r)
-  (-> pool? any/c void?)
+(define (pool-release! p r)
   (void (dispatch p release r)))
 
-(define/contract (pool-close! p)
-  (-> pool? void?)
+(define (pool-close! p)
   (void (dispatch p close)))
 
 (define-syntax (dispatch stx)
