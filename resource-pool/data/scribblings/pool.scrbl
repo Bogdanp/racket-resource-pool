@@ -10,7 +10,7 @@
 
 This module provides a generic blocking @deftech{resource pool}
 implementation. Useful for managing things such as database and HTTP
-connections.
+connections. Resource pools are both thread-safe and kill-safe.
 
 @deftogether[(
   @defproc[(pool? [v any/c]) boolean?]
