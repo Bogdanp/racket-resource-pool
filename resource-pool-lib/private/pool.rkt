@@ -6,7 +6,7 @@
 (provide
  exn:fail:pool?
  current-idle-timeout-slack
- pool abandon lease release close oops)
+ pool lease-evt release close oops)
 
 (define-logger resource-pool)
 
@@ -25,126 +25,130 @@
            #;waiters null
            #;deadline (make-hasheq))
   #:event (lambda (st)
-            (match-define (state _ total _ busy waiters deadlines) st)
-            (cond
-              [(hash-empty? deadlines) never-evt]
-              [else
-               (handle-evt
-                (alarm-evt
-                 (+ (apply min (hash-values deadlines))
-                    (current-idle-timeout-slack))
-                 #;monotonic? #t)
-                (lambda (_)
-                  (define t (current-inexact-monotonic-milliseconds))
-                  (define-values (next-idle n-destroyed)
-                    (for/fold ([next-idle null]
-                               [n-destroyed 0])
-                              ([(res deadline) (in-hash deadlines)])
-                      (cond
-                        [(< deadline t)
-                         (destroy-resource res)
-                         (hash-remove! deadlines res)
-                         (values next-idle (add1 n-destroyed))]
-                        [else
-                         (values (cons res next-idle) n-destroyed)])))
-                  (log-resource-pool-debug "destroyed ~s idle resource(s)" n-destroyed)
-                  (state
-                   #;stopped? #f
-                   #;total (- total n-destroyed)
-                   #;idle next-idle
-                   #;busy busy
-                   #;waiters waiters
-                   #;deadlines deadlines)))]))
+            (match-define (state _ total idle busy waiters deadlines) st)
+            (define idle-deadline-evt
+              (if (hash-empty? deadlines)
+                  never-evt
+                  (handle-evt
+                   (alarm-evt
+                    (+ (apply min (hash-values deadlines))
+                       (current-idle-timeout-slack))
+                    #;monotonic? #t)
+                   (lambda (_)
+                     (define t (current-inexact-monotonic-milliseconds))
+                     (define-values (remaining-idle n-destroyed)
+                       (for/fold ([remaining-idle null]
+                                  [n-destroyed 0])
+                                 ([(res deadline) (in-hash deadlines)])
+                         (cond
+                           [(< deadline t)
+                            (destroy-resource res)
+                            (hash-remove! deadlines res)
+                            (values remaining-idle (add1 n-destroyed))]
+                           [else
+                            (values (cons res remaining-idle) n-destroyed)])))
+                     (log-resource-pool-debug "expired ~s idle resource(s)" n-destroyed)
+                     (state
+                      #;stopped? #f
+                      #;total (- total n-destroyed)
+                      #;idle remaining-idle
+                      #;busy busy
+                      #;waiters waiters
+                      #;deadlines deadlines)))))
+            (define waiter-res-evts
+              (if (null? idle)
+                  (list)
+                  (for/list ([waiter (in-list waiters)])
+                    (match-define (cons res-ch _) waiter)
+                    (match-define (cons res remaining-idle) idle)
+                    (handle-evt
+                     (channel-put-evt res-ch res)
+                     (lambda (_)
+                       (hash-remove! deadlines res)
+                       (log-resource-pool-debug "leased ~.s" res)
+                       (struct-copy
+                        state st
+                        [idle remaining-idle]
+                        [busy (cons res busy)]
+                        [waiters (remq waiter waiters)]))))))
+            (define waiter-nack-evts
+              (for/list ([waiter (in-list waiters)])
+                (match-define (cons _ nack-evt) waiter)
+                (handle-evt
+                 nack-evt
+                 (lambda (_)
+                   (struct-copy
+                    state st
+                    [waiters (remq waiter waiters)])))))
+            (apply
+             choice-evt
+             idle-deadline-evt
+             (append
+              waiter-res-evts
+              waiter-nack-evts)))
   #:stopped? state-stopped?
 
-  (define (abandon st waiter)
+  (define (lease st res-ch nack-evt)
     (match-define (state _ total idle busy waiters deadlines) st)
-    (values
-     (state
-      #;stopped #f
-      #;total total
-      #;idle idle
-      #;busy busy
-      #;waiters (remq waiter waiters)
-      #;deadlines deadlines)
-     (void)))
-
-  (define (lease st maybe-waiter)
-    (match-define (state _ total idle busy waiters deadlines) st)
+    (define waiter (cons res-ch nack-evt))
     (cond
-      [(not (null? idle))
-       (define res (car idle))
-       (hash-remove! deadlines res)
-       (log-resource-pool-debug "leased ~.s" res)
-       (values
-        (state
-         #;stopped? #f
-         #;total total
-         #;idle (cdr idle)
-         #;busy (cons res busy)
-         #;waiters (remq maybe-waiter waiters)
-         #;deadlines deadlines)
-        `(ok ,res))]
-      [(< total max-size)
+      [(and
+        (null? idle)
+        (< total max-size))
        (define res (make-resource))
+       (hash-set! deadlines res (+ (current-inexact-monotonic-milliseconds) idle-ttl))
        (log-resource-pool-debug "created ~.s" res)
        (values
         (state
          #;stopped? #f
          #;total (add1 total)
-         #;idle idle
-         #;busy (cons res busy)
-         #;waiters (remq maybe-waiter waiters)
+         #;idle (cons res idle)
+         #;busy busy
+         #;waiters (cons waiter waiters)
          #;deadlines deadlines)
-        `(ok ,res))]
+        (void))]
       [else
-       (define waiter (make-semaphore))
        (values
         (state
          #;stopped #f
          #;total total
          #;idle idle
          #;busy busy
-         #;waiters (cons waiter (remq maybe-waiter waiters))
+         #;waiters (cons waiter waiters)
          #;deadlines deadlines)
-        `(wait ,waiter))]))
+        (void))]))
 
   (define (release st res)
     (match-define (state _ total idle busy waiters deadlines) st)
-    (cond
-      [(memq res busy)
-       (hash-set! deadlines res (+ (current-inexact-monotonic-milliseconds) idle-ttl))
-       (for-each semaphore-post waiters)
-       (log-resource-pool-debug "released ~.s" res)
-       (values
-        (state
-         #;stopped? #f
-         #;total total
-         #;idle (cons res idle)
-         #;busy (remq res busy)
-         #;waiters waiters
-         #;deadlines deadlines)
-        (void))]
-      [else
-       (oops "released resource was never leased: ~.s" res)]))
+    (unless (memq res busy)
+      (oops "released resource was never leased: ~.s" res))
+    (hash-set! deadlines res (+ (current-inexact-monotonic-milliseconds) idle-ttl))
+    (log-resource-pool-debug "released ~.s" res)
+    (values
+     (state
+      #;stopped? #f
+      #;total total
+      #;idle (cons res idle)
+      #;busy (remq res busy)
+      #;waiters waiters
+      #;deadlines deadlines)
+     (void)))
 
   (define (close st)
     (match-define (state _ _ idle busy _ _) st)
-    (cond
-      [(null? busy)
-       (log-resource-pool-debug "destroying ~s idle resource(s)" (length idle))
-       (for-each destroy-resource idle)
-       (values
-        (state
-         #;stopped? #t
-         #;total 0
-         #;idle null
-         #;busy null
-         #;waiters null
-         #;deadlines (make-hasheq))
-        (void))]
-      [else
-       (oops "attempted to close pool without releasing all the resources")])))
+    (unless (null? busy)
+      (oops "attempted to close pool without releasing all the resources"))
+    (log-resource-pool-debug "destroying ~s idle resource(s)" (length idle))
+    (for-each destroy-resource idle)
+    (values
+     (state
+      #;stopped? #t
+      #;total 0
+      #;idle null
+      #;busy null
+      #;waiters null
+      #;deadlines (make-hasheq))
+     (void))))
 
 (define (oops msg . args)
   (raise

@@ -49,28 +49,22 @@
     (lambda ()
       (pool-release! p res))))
 
-(define (pool-take! p [t #f])
+(define (pool-take! p [timeout #f])
   (match-define (pool impl) p)
-  (define deadline
-    (and t (+ t (current-inexact-monotonic-milliseconds))))
-  (let loop ([waiter #f]
-             [waiting? #f])
-    (cond
-      [waiting?
-       (sync
-        (handle-evt
-         (alarm-evt deadline t)
-         (lambda (_)
-           (begin0 #f
-             (actor:abandon impl waiter))))
-        (handle-evt
-         waiter
-         (lambda (_)
-           (loop waiter #f))))]
-      [else
-       (match (actor:lease impl waiter)
-         [`(ok ,res) res]
-         [`(wait ,waiter) (loop waiter #t)])])))
+  (sync
+   (nack-guard-evt
+    (lambda (nack)
+      (define res-ch (make-channel))
+      (replace-evt
+       (actor:lease-evt impl res-ch nack)
+       (lambda (_) res-ch))))
+   (if timeout
+       (handle-evt
+        (alarm-evt
+         (+ timeout (current-inexact-monotonic-milliseconds))
+         #;monotonic? #t)
+        (λ (_) #f))
+       never-evt)))
 
 (define (pool-release! p res)
   (actor:release (pool-impl p) res))

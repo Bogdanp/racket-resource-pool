@@ -80,7 +80,7 @@
     [('(expire) (state p _size ttl stack expired _closed?))
      (define v (car stack))
      (pool-release! p v)
-     (sync (alarm-evt (+ (current-inexact-milliseconds) (* 2 ttl))))
+     (sync (alarm-evt (+ (current-inexact-monotonic-milliseconds) (* 2 ttl)) #t))
      (sync (system-idle-evt))
      (struct-copy state s
                   [stack (cdr stack)]
@@ -121,6 +121,47 @@
      (test-suite
       "data/pool"
 
+      (test-case "basic use"
+        (define seq 0)
+        (define p
+          (make-pool
+           (lambda ()
+             (begin0 seq
+               (set! seq (add1 seq))))))
+        (define v0 (pool-take! p))
+        (check-equal? v0 0)
+        (define v1 (pool-take! p))
+        (check-equal? v1 1)
+        (pool-release! p v0)
+        (define v2 (pool-take! p))
+        (check-equal? v2 v0)
+        (pool-release! p v1)
+        (check-exn
+         #rx"attempted to close pool without releasing all the resources"
+         (λ () (pool-close! p)))
+        (pool-release! p v2)
+        (pool-close! p)
+        (check-exn
+         #rx"stopped"
+         (λ () (pool-close! p))))
+
+      (test-case "kill safety"
+        (define sema
+          (make-semaphore))
+        (define p
+          (make-pool
+           (lambda ()
+             (semaphore-wait sema)
+             (gensym))))
+        (define thd
+          (thread
+           (lambda ()
+             (pool-take! p))))
+        (sync (system-idle-evt))
+        (kill-thread thd)
+        (semaphore-post sema)
+        (check-not-false (pool-take! p)))
+
       (test-case "sync access"
         (define-property prop:sync
           ([size (gen:integer-in 1 8)]
@@ -130,6 +171,6 @@
 
         (check-property
          (make-config
-          #:tests 50
-          #:deadline (+ (current-inexact-milliseconds) (* 1800 1000)))
+          #:tests (if (getenv "CI") 50 150)
+          #:deadline (+ (current-inexact-milliseconds) (* 30 60 1000)))
          prop:sync))))))
