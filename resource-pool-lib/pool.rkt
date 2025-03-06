@@ -9,16 +9,16 @@
  (contract-out
   [exn:fail:pool? (-> any/c boolean?)]
   [pool? (-> any/c boolean?)]
-  [make-pool (->* ((-> any/c))
-                  ((-> any/c void?)
+  [make-pool (->* [(-> any/c)]
+                  [(-> any/c void?)
                    #:max-size exact-positive-integer?
-                   #:idle-ttl (or/c +inf.0 exact-positive-integer?))
+                   #:idle-ttl (or/c +inf.0 exact-positive-integer?)]
                   pool?)]
-  [pool-take! (->* (pool?) ((or/c #f exact-nonnegative-integer?)) (or/c #f any/c))]
+  [pool-take! (->* [pool?] [(or/c #f exact-nonnegative-integer?)] (or/c #f any/c))]
   [pool-release! (-> pool? any/c void?)]
   [pool-close! (-> pool? void?)]
-  [call-with-pool-resource (->* (pool? (-> any/c any))
-                                (#:timeout (or/c #f exact-nonnegative-integer?))
+  [call-with-pool-resource (->* [pool? (-> any/c any)]
+                                [#:timeout (or/c #f exact-nonnegative-integer?)]
                                 any)]
   [current-idle-timeout-slack (parameter/c real?)]))
 
@@ -200,7 +200,7 @@
     [(_ p id (~optional (~seq #:timeout timeout)) arg ...)
      #'(dispatch* p 'id (~? timeout #f) arg ...)]))
 
-(define (dispatch* p id timeout . args)
+(define (dispatch* p id timeout . args) ;; noqa
   (define res-or-exn
     (sync
      (apply pool-evt p id args)
