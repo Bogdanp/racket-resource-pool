@@ -42,7 +42,7 @@
     [('(take) (state p _size _ttl _stack _expired #t))
      (begin0 s
        (check-exn
-        #rx"pool closed"
+        #rx"stopped"
         (lambda ()
           (pool-release! p (gensym)))))]
 
@@ -59,7 +59,7 @@
      (begin0 s
        (check-exn
         (if closed?
-            #rx"pool closed"
+            #rx"stopped"
             #rx"never leased")
         (lambda ()
           (pool-release! p (gensym)))))]
@@ -72,7 +72,7 @@
      (begin0 s
        (check-exn
         (if closed?
-            #rx"pool closed"
+            #rx"stopped"
             #rx"never leased")
         (lambda ()
           (pool-release! p (gensym)))))]
@@ -89,7 +89,7 @@
     [('(close) (state p _size _ttl _stack _expired #t))
      (begin0 s
        (check-exn
-        #rx"pool closed"
+        #rx"stopped"
         (lambda ()
           (pool-close! p))))]
 

@@ -9,7 +9,7 @@
 @defmodule[data/pool]
 
 This module provides a generic blocking @deftech{resource pool}
-implementation.  Useful for managing things such as database and HTTP
+implementation. Useful for managing things such as database and HTTP
 connections.
 
 @deftogether[(
@@ -21,7 +21,7 @@ connections.
 )]{
 
   The @racket[make-pool] function returns a new @tech{resource pool}
-  that lazily creates new resources using @racket[make-resource].  The
+  that lazily creates new resources using @racket[make-resource]. The
   resulting pool can contain up to @racket[#:max-size] resources.
 
   The @racket[#:idle-ttl] argument controls how long a resource can
@@ -30,11 +30,11 @@ connections.
 }
 
 @defproc[(call-with-pool-resource [p pool?]
-                                  [f (-> any/c any)]
+                                  [proc (-> any/c any)]
                                   [#:timeout timeout (or/c #f exact-nonnegative-integer?)]) any/c]{
 
-  Leases a resource from @racket[p] and applies @racket[f] to it,
-  returning the leased value back into the pool once @racket[f]
+  Leases a resource from @racket[p] and applies @racket[proc] to it,
+  returning the leased value back into the pool once @racket[proc]
   finishes executing.
 
   The @racket[#:timeout] behaves the same as in @racket[pool-take!],
@@ -54,17 +54,16 @@ connections.
 @defproc[(pool-release! [p pool?]
                         [v any/c]) void?]{
 
-  Releases @racket[v] back into @racket[p].  If @racket[v] was not
-  leased from @racket[p], then an @racket[exn:fail:pool?] error is
-  raised.
+  Releases @racket[v] back into @racket[p]. If @racket[v] was not leased
+  from @racket[p], then an @racket[exn:fail:pool?] error is raised.
 }
 
 @defproc[(pool-close! [p pool?]) void?]{
-  Closes @racket[p]. If @racket[pool-close] is called before
-  all of the leased resources have been returned to the pool, an
+  Closes @racket[p]. If @racket[pool-close] is called before all
+  of the leased resources have been returned to the pool, an
   @racket[exn:fail:pool?] error is raised and the pool remains open.
 
-  Raises an error if @racket[p] has already been closed.
+  Raises an exception if @racket[p] has already been closed.
 }
 
 @defproc[(exn:fail:pool? [v any/c]) boolean?]{
