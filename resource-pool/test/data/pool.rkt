@@ -162,6 +162,44 @@
         (semaphore-post sema)
         (check-not-false (pool-take! p)))
 
+      (test-case "take evts"
+        (define sema
+          (make-semaphore))
+        (define p
+          (make-pool
+           (lambda ()
+             (semaphore-wait sema)
+             (gensym))))
+        (define e
+          (pool-take!-evt p))
+        (semaphore-post sema)
+        (define res (sync e))
+        (check-not-false res)
+        (check-false (sync/timeout 0.01 e))
+        (pool-release! p res)
+        (define res2 (sync/timeout 0.01 e))
+        (check-eq? res res2)
+        (pool-release! p res))
+
+      (unless (getenv "CI")
+        (test-case "make-resource exn"
+          (define err-out (open-output-string))
+          (parameterize ([current-error-port err-out])
+            (define fail? #f)
+            (define p
+              (make-pool
+               (lambda ()
+                 (if fail?
+                     (error 'fail)
+                     (gensym)))))
+            (check-not-false (pool-take! p))
+            (set! fail? #t)
+            (check-false (sync/timeout 0.01 (pool-take!-evt p))))
+          (check-true
+           (regexp-match?
+            #rx"make-resource raised an error"
+            (get-output-string err-out)))))
+
       (test-case "sync access"
         (define-property prop:sync
           ([size (gen:integer-in 1 8)]

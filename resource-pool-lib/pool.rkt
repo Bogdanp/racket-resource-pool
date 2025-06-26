@@ -10,17 +10,26 @@
 
 (provide
  (contract-out
-  [exn:fail:pool? (-> any/c boolean?)]
+  [exn:fail:pool?
+   (-> any/c boolean?)]
   [make-pool
    (->* [(-> any/c)]
         [(-> any/c void?)
          #:max-size exact-positive-integer?
          #:idle-ttl (or/c +inf.0 exact-positive-integer?)]
         pool?)]
-  [pool? (-> any/c boolean?)]
-  [pool-take! (->* [pool?] [(or/c #f exact-nonnegative-integer?)] (or/c #f any/c))]
-  [pool-release! (-> pool? any/c void?)]
-  [pool-close! (-> pool? void?)]
+  [pool?
+   (-> any/c boolean?)]
+  [pool-take!
+   (->* [pool?]
+        [(or/c #f exact-nonnegative-integer?)]
+        (or/c #f any/c))]
+  [pool-take!-evt
+   (-> pool? evt?)]
+  [pool-release!
+   (-> pool? any/c void?)]
+  [pool-close!
+   (-> pool? void?)]
   [call-with-pool-resource
     (->* [pool? (-> any/c any)]
          [#:timeout (or/c #f exact-nonnegative-integer?)]
@@ -50,14 +59,8 @@
       (pool-release! p res))))
 
 (define (pool-take! p [timeout #f])
-  (match-define (pool impl) p)
   (sync
-   (nack-guard-evt
-    (lambda (nack)
-      (define res-ch (make-channel))
-      (replace-evt
-       (actor:lease-evt impl res-ch nack)
-       (lambda (_) res-ch))))
+   (pool-take!-evt p)
    (if timeout
        (handle-evt
         (alarm-evt
@@ -65,6 +68,15 @@
          #;monotonic? #t)
         (λ (_) #f))
        never-evt)))
+
+(define (pool-take!-evt p)
+  (match-define (pool impl) p)
+  (nack-guard-evt
+   (lambda (nack)
+     (define ch (make-channel))
+     (replace-evt
+      (actor:lease-evt impl ch nack)
+      (λ (_) ch)))))
 
 (define (pool-release! p res)
   (actor:release (pool-impl p) res))

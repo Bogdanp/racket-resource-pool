@@ -20,9 +20,10 @@ connections. Resource pools are both thread-safe and kill-safe.
                       [#:idle-ttl idle-ttl (or/c +inf.0 exact-positive-integer?) (* 3600 1000)]) pool?]
 )]{
 
-  The @racket[make-pool] function returns a new @tech{resource pool}
+  The @racket[make-pool] procedure returns a new @tech{resource pool}
   that lazily creates new resources using @racket[make-resource]. The
-  resulting pool can contain up to @racket[#:max-size] resources.
+  resulting pool can contain up to @racket[#:max-size] resources. The
+  @racket[make-resource] procedure @emph{must not} raise an exception.
 
   The @racket[#:idle-ttl] argument controls how long a resource can
   remain idle before @racket[destroy-resource] is applied to it and it
@@ -45,10 +46,17 @@ connections. Resource pools are both thread-safe and kill-safe.
 @defproc[(pool-take! [p pool?]
                      [timeout (or/c #f exact-nonnegative-integer?) #f]) (or/c #f any/c)]{
 
-  Waits for a resource to become available and then leases it from
-  @racket[p]. If the @racket[timeout] argument is provided, the function
-  will block for at most @racket[timeout] milliseconds before returning.
-  On timeout, @racket[#f] is returned.
+  Waits for a resource to become available and then leases it
+  from @racket[p]. If the @racket[timeout] argument is provided,
+  the @racket[pool-take!] will block for at most @racket[timeout]
+  milliseconds before returning. On timeout, @racket[#f] is returned.
+}
+
+@defproc[(pool-take!-evt [p pool?]) evt?]{
+  Returns a synchronizable event that is ready for synchronization
+  when a pool resource becomes available.
+
+  @history[#:added "0.3"]
 }
 
 @defproc[(pool-release! [p pool?]

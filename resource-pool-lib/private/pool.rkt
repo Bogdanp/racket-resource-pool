@@ -1,7 +1,8 @@
 #lang racket/base
 
 (require actor
-         racket/match)
+         racket/match
+         racket/promise)
 
 (provide
  exn:fail:pool?
@@ -14,7 +15,7 @@
   (make-parameter (* 15 1000)))
 
 (struct exn:fail:pool exn:fail ())
-(struct state (stopped? total idle busy waiters deadlines))
+(struct state (stopped? total idle busy waiters promises deadlines))
 
 (define-actor (pool make-resource destroy-resource max-size idle-ttl)
   #:state (state
@@ -23,9 +24,10 @@
            #;idle null
            #;busy null
            #;waiters null
+           #;promises null
            #;deadline (make-hasheq))
   #:event (lambda (st)
-            (match-define (state _ total idle busy waiters deadlines) st)
+            (match-define (state _ total idle busy waiters promises deadlines) st)
             (define idle-deadline-evt
               (if (hash-empty? deadlines)
                   never-evt
@@ -54,7 +56,40 @@
                       #;idle remaining-idle
                       #;busy busy
                       #;waiters waiters
+                      #;promises promises
                       #;deadlines deadlines)))))
+            (define promise-evts
+              (for/list ([promise (in-list promises)])
+                (handle-evt
+                 promise
+                 (lambda (_)
+                   ;; On error, the best we can do here is log an error
+                   ;; message and remove the promise from the pool. We
+                   ;; can't send the error to the originating thread,
+                   ;; because it might've received another idle resource
+                   ;; in the mean time. A make-resource procedure should
+                   ;; never raise an exception.
+                   (with-handlers
+                     ([exn:fail?
+                       (lambda (e)
+                         (log-resource-pool-error
+                          (string-append
+                           "failed to create resource: ~a~n"
+                           "  the pool is now oversubscribed~n"
+                           "  ensure that make-resource does not fail")
+                          (exn-message e))
+                         ((error-display-handler)
+                          "pool: make-resource raised an error" e)
+                         (struct-copy
+                          state st
+                          [promises (remq promise promises)]))])
+                     (define res (force promise))
+                     (hash-set! deadlines res (deadline idle-ttl))
+                     (log-resource-pool-debug "created ~.s" res)
+                     (struct-copy
+                      state st
+                      [idle (cons res idle)]
+                      [promises (remq promise promises)]))))))
             (define waiter-res-evts
               (if (null? idle)
                   (list)
@@ -84,27 +119,29 @@
              choice-evt
              idle-deadline-evt
              (append
+              promise-evts
               waiter-res-evts
               waiter-nack-evts)))
   #:stopped? state-stopped?
 
   (define (lease st res-ch nack-evt)
-    (match-define (state _ total idle busy waiters deadlines) st)
+    (match-define (state _ total idle busy waiters promises deadlines) st)
     (define waiter (cons res-ch nack-evt))
     (cond
       [(and
         (null? idle)
         (< total max-size))
-       (define res (make-resource))
-       (hash-set! deadlines res (+ (current-inexact-monotonic-milliseconds) idle-ttl))
-       (log-resource-pool-debug "created ~.s" res)
+       (define promise
+         (delay/thread
+          (make-resource)))
        (values
         (state
          #;stopped? #f
          #;total (add1 total)
-         #;idle (cons res idle)
+         #;idle idle
          #;busy busy
          #;waiters (cons waiter waiters)
+         #;promises (cons promise promises)
          #;deadlines deadlines)
         (void))]
       [else
@@ -115,14 +152,15 @@
          #;idle idle
          #;busy busy
          #;waiters (cons waiter waiters)
+         #;promises promises
          #;deadlines deadlines)
         (void))]))
 
   (define (release st res)
-    (match-define (state _ total idle busy waiters deadlines) st)
+    (match-define (state _ total idle busy waiters promises deadlines) st)
     (unless (memq res busy)
       (oops "released resource was never leased: ~.s" res))
-    (hash-set! deadlines res (+ (current-inexact-monotonic-milliseconds) idle-ttl))
+    (hash-set! deadlines res (deadline idle-ttl))
     (log-resource-pool-debug "released ~.s" res)
     (values
      (state
@@ -131,12 +169,14 @@
       #;idle (cons res idle)
       #;busy (remq res busy)
       #;waiters waiters
+      #;promises promises
       #;deadlines deadlines)
      (void)))
 
   (define (close st)
-    (match-define (state _ _ idle busy _ _) st)
-    (unless (null? busy)
+    (match-define (state _ _ idle busy _ promises _) st)
+    (unless (and (null? busy)
+                 (null? promises))
       (oops "attempted to close pool without releasing all the resources"))
     (log-resource-pool-debug "destroying ~s idle resource(s)" (length idle))
     (for-each destroy-resource idle)
@@ -147,6 +187,7 @@
       #;idle null
       #;busy null
       #;waiters null
+      #;promises null
       #;deadlines (make-hasheq))
      (void))))
 
@@ -155,3 +196,6 @@
    (exn:fail:pool
     (apply format msg args)
     (current-continuation-marks))))
+
+(define (deadline ttl)
+  (+ (current-inexact-monotonic-milliseconds) ttl))
