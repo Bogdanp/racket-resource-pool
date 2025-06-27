@@ -79,7 +79,8 @@
                            "  ensure that make-resource does not fail")
                           (exn-message e))
                          ((error-display-handler)
-                          "pool: make-resource raised an error" e)
+                          (format "pool: ~a" (exn-message e))
+                          e)
                          (struct-copy
                           state st
                           [promises (remq promise promises)]))])
