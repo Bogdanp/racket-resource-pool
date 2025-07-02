@@ -197,7 +197,7 @@
             (check-false (sync/timeout 0.01 (pool-take!-evt p))))
           (check-true
            (regexp-match?
-            #rx"make-resource raised an error"
+            #rx"pool: error: fail"
             (get-output-string err-out)))))
 
       (test-case "sync access"
