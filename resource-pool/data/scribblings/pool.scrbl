@@ -66,6 +66,15 @@ connections. Resource pools are both thread-safe and kill-safe.
   from @racket[p], then an @racket[exn:fail:pool?] error is raised.
 }
 
+@defproc[(pool-abanon! [p pool?]
+                       [v any/c]) void?]{
+  Destroys @racket[v] and releases it from the pool immediately.
+  If @racket[v] was not leased from @racket[p], then an
+  @racket[exn:fail:pool?] error is raised.
+
+  @history[#:added "0.4"]
+}
+
 @defproc[(pool-close! [p pool?]) void?]{
   Closes @racket[p]. If @racket[pool-close] is called before all
   of the leased resources have been returned to the pool, an

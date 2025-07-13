@@ -7,7 +7,7 @@
 (provide
  exn:fail:pool?
  current-idle-timeout-slack
- pool lease-evt release close oops)
+ pool lease-evt release abandon close oops)
 
 (define-logger resource-pool)
 
@@ -168,6 +168,23 @@
       #;stopped? #f
       #;total total
       #;idle (cons res idle)
+      #;busy (remq res busy)
+      #;waiters waiters
+      #;promises promises
+      #;deadlines deadlines)
+     (void)))
+
+  (define (abandon st res)
+    (match-define (state _ total idle busy waiters promises deadlines) st)
+    (unless (memq res busy)
+      (oops "abandoned resource was never leased: ~.s" res))
+    (destroy-resource res)
+    (log-resource-pool-debug "abandoned ~.s" res)
+    (values
+     (state
+      #;stopped #f
+      #;total (sub1 total)
+      #;idle idle
       #;busy (remq res busy)
       #;waiters waiters
       #;promises promises

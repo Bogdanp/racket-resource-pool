@@ -28,6 +28,8 @@
    (-> pool? evt?)]
   [pool-release!
    (-> pool? any/c void?)]
+  [pool-abandon!
+   (-> pool? any/c void?)]
   [pool-close!
    (-> pool? void?)]
   [call-with-pool-resource
@@ -80,6 +82,9 @@
 
 (define (pool-release! p res)
   (actor:release (pool-impl p) res))
+
+(define (pool-abandon! p res)
+  (actor:abandon (pool-impl p) res))
 
 (define (pool-close! p)
   (actor:close (pool-impl p)))
