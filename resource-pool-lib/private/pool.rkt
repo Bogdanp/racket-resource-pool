@@ -86,7 +86,7 @@
                           [promises (remq promise promises)]))])
                      (define res (force promise))
                      (hash-set! deadlines res (deadline idle-ttl))
-                     (log-resource-pool-debug "created ~.s" res)
+                     (log-resource-pool-debug "created ~a" (~res res))
                      (struct-copy
                       state st
                       [idle (cons res idle)]
@@ -101,7 +101,7 @@
                      (channel-put-evt res-ch res)
                      (lambda (_)
                        (hash-remove! deadlines res)
-                       (log-resource-pool-debug "leased ~.s" res)
+                       (log-resource-pool-debug "leased ~a" (~res res))
                        (struct-copy
                         state st
                         [idle remaining-idle]
@@ -160,9 +160,9 @@
   (define (release st res)
     (match-define (state _ total idle busy waiters promises deadlines) st)
     (unless (memq res busy)
-      (oops "released resource was never leased: ~.s" res))
+      (oops "released resource was never leased: ~a" (~res res)))
     (hash-set! deadlines res (deadline idle-ttl))
-    (log-resource-pool-debug "released ~.s" res)
+    (log-resource-pool-debug "released ~a" (~res res))
     (values
      (state
       #;stopped? #f
@@ -177,9 +177,9 @@
   (define (abandon st res)
     (match-define (state _ total idle busy waiters promises deadlines) st)
     (unless (memq res busy)
-      (oops "abandoned resource was never leased: ~.s" res))
+      (oops "abandoned resource was never leased: ~a" (~res res)))
     (destroy-resource res)
-    (log-resource-pool-debug "abandoned ~.s" res)
+    (log-resource-pool-debug "abandoned ~a" (~res res))
     (values
      (state
       #;stopped #f
@@ -217,3 +217,6 @@
 
 (define (deadline ttl)
   (+ (current-inexact-monotonic-milliseconds) ttl))
+
+(define (~res res)
+  (format "~.s (~s)" res (eq-hash-code res)))
