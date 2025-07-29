@@ -25,104 +25,110 @@
            #;busy null
            #;waiters null
            #;promises null
-           #;deadline (make-hasheq))
-  #:event (lambda (st)
-            (match-define (state _ total idle busy waiters promises deadlines) st)
-            (define idle-deadline-evt
-              (if (hash-empty? deadlines)
-                  never-evt
-                  (handle-evt
-                   (alarm-evt
-                    (+ (apply min (hash-values deadlines))
-                       (current-idle-timeout-slack))
-                    #;monotonic? #t)
-                   (lambda (_)
-                     (define t (current-inexact-monotonic-milliseconds))
-                     (define-values (remaining-idle n-destroyed)
-                       (for/fold ([remaining-idle null]
-                                  [n-destroyed 0])
-                                 ([(res deadline) (in-hash deadlines)])
-                         (cond
-                           [(< deadline t)
-                            (destroy-resource res)
-                            (hash-remove! deadlines res)
-                            (values remaining-idle (add1 n-destroyed))]
-                           [else
-                            (values (cons res remaining-idle) n-destroyed)])))
-                     (log-resource-pool-debug "expired ~s idle resource(s)" n-destroyed)
-                     (state
-                      #;stopped? #f
-                      #;total (- total n-destroyed)
-                      #;idle remaining-idle
-                      #;busy busy
-                      #;waiters waiters
-                      #;promises promises
-                      #;deadlines deadlines)))))
-            (define promise-evts
-              (for/list ([promise (in-list promises)])
-                (handle-evt
-                 promise
-                 (lambda (_)
-                   ;; On error, the best we can do here is log an error
-                   ;; message and remove the promise from the pool. We
-                   ;; can't send the error to the originating thread,
-                   ;; because it might've received another idle resource
-                   ;; in the mean time. A make-resource procedure should
-                   ;; never raise an exception.
-                   (with-handlers
-                     ([exn:fail?
-                       (lambda (e)
-                         (log-resource-pool-error
-                          (string-append
-                           "failed to create resource: ~a~n"
-                           "  the pool is now oversubscribed~n"
-                           "  ensure that make-resource does not fail")
-                          (exn-message e))
-                         ((error-display-handler)
-                          (format "pool: ~a" (exn-message e))
-                          e)
-                         (struct-copy
-                          state st
-                          [promises (remq promise promises)]))])
-                     (define res (force promise))
-                     (hash-set! deadlines res (deadline idle-ttl))
-                     (log-resource-pool-debug "created ~a" (~res res))
-                     (struct-copy
-                      state st
-                      [idle (cons res idle)]
-                      [promises (remq promise promises)]))))))
-            (define waiter-res-evts
-              (if (null? idle)
-                  (list)
-                  (for/list ([waiter (in-list waiters)])
-                    (match-define (cons res-ch _) waiter)
-                    (match-define (cons res remaining-idle) idle)
+           #;deadlines (hasheq))
+  #:event (let ([slack (current-idle-timeout-slack)])
+            (lambda (st)
+              (match-define (state _ total idle busy waiters promises deadlines) st)
+              (define idle-deadline-evt
+                (if (hash-empty? deadlines)
+                    never-evt
                     (handle-evt
-                     (channel-put-evt res-ch res)
+                     (alarm-evt
+                      #;msecs (+ (apply min (hash-values deadlines)) slack)
+                      #;monotonic? #t)
                      (lambda (_)
-                       (hash-remove! deadlines res)
-                       (log-resource-pool-debug "leased ~a" (~res res))
+                       (define t (current-inexact-monotonic-milliseconds))
+                       (define-values (remaining-idle remaining-deadlines n-destroyed)
+                         (for/fold ([remaining-idle null]
+                                    [remaining-deadlines deadlines]
+                                    [n-destroyed 0])
+                                   ([(res deadline) (in-hash deadlines)])
+                           (cond
+                             [(< deadline t)
+                              (destroy-resource res)
+                              (values
+                               remaining-idle
+                               (hash-remove remaining-deadlines res)
+                               (add1 n-destroyed))]
+                             [else
+                              (values
+                               (cons res remaining-idle)
+                               remaining-deadlines
+                               n-destroyed)])))
+                       (log-resource-pool-debug "expired ~s idle resource(s)" n-destroyed)
+                       (state
+                        #;stopped? #f
+                        #;total (- total n-destroyed)
+                        #;idle remaining-idle
+                        #;busy busy
+                        #;waiters waiters
+                        #;promises promises
+                        #;deadlines remaining-deadlines)))))
+              (define promise-evts
+                (for/list ([promise (in-list promises)])
+                  (handle-evt
+                   promise
+                   (lambda (_)
+                     ;; On error, the best we can do here is log an error
+                     ;; message and remove the promise from the pool. We
+                     ;; can't send the error to the originating thread,
+                     ;; because it might've received another idle resource
+                     ;; in the mean time. A make-resource procedure should
+                     ;; never raise an exception.
+                     (with-handlers
+                       ([exn:fail?
+                         (lambda (e)
+                           (log-resource-pool-error
+                            (string-append
+                             "failed to create resource: ~a~n"
+                             "  the pool is now oversubscribed~n"
+                             "  ensure that make-resource does not fail")
+                            (exn-message e))
+                           ((error-display-handler)
+                            (format "pool: ~a" (exn-message e))
+                            e)
+                           (struct-copy
+                            state st
+                            [promises (remq promise promises)]))])
+                       (define res (force promise))
+                       (log-resource-pool-debug "created ~a" (~res res))
                        (struct-copy
                         state st
-                        [idle remaining-idle]
-                        [busy (cons res busy)]
-                        [waiters (remq waiter waiters)]))))))
-            (define waiter-nack-evts
-              (for/list ([waiter (in-list waiters)])
-                (match-define (cons _ nack-evt) waiter)
-                (handle-evt
-                 nack-evt
-                 (lambda (_)
-                   (struct-copy
-                    state st
-                    [waiters (remq waiter waiters)])))))
-            (apply
-             choice-evt
-             idle-deadline-evt
-             (append
-              promise-evts
-              waiter-res-evts
-              waiter-nack-evts)))
+                        [idle (cons res idle)]
+                        [promises (remq promise promises)]
+                        [deadlines (hash-set deadlines res (deadline idle-ttl))]))))))
+              (define waiter-res-evts
+                (if (null? idle)
+                    (list)
+                    (for/list ([waiter (in-list waiters)])
+                      (match-define (cons res-ch _) waiter)
+                      (match-define (cons res remaining-idle) idle)
+                      (handle-evt
+                       (channel-put-evt res-ch res)
+                       (lambda (_)
+                         (log-resource-pool-debug "leased ~a" (~res res))
+                         (struct-copy
+                          state st
+                          [idle remaining-idle]
+                          [busy (cons res busy)]
+                          [deadlines (hash-remove deadlines res)]
+                          [waiters (remq waiter waiters)]))))))
+              (define waiter-nack-evts
+                (for/list ([waiter (in-list waiters)])
+                  (match-define (cons _ nack-evt) waiter)
+                  (handle-evt
+                   nack-evt
+                   (lambda (_)
+                     (struct-copy
+                      state st
+                      [waiters (remq waiter waiters)])))))
+              (apply
+               choice-evt
+               idle-deadline-evt
+               (append
+                promise-evts
+                waiter-res-evts
+                waiter-nack-evts))))
   #:stopped? state-stopped?
 
   (define (lease st res-ch nack-evt)
@@ -161,7 +167,6 @@
     (match-define (state _ total idle busy waiters promises deadlines) st)
     (unless (memq res busy)
       (oops "released resource was never leased: ~a" (~res res)))
-    (hash-set! deadlines res (deadline idle-ttl))
     (log-resource-pool-debug "released ~a" (~res res))
     (values
      (state
@@ -171,7 +176,7 @@
       #;busy (remq res busy)
       #;waiters waiters
       #;promises promises
-      #;deadlines deadlines)
+      #;deadlines (hash-set deadlines res (deadline idle-ttl)))
      (void)))
 
   (define (abandon st res)
