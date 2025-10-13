@@ -154,7 +154,7 @@
       [else
        (values
         (state
-         #;stopped #f
+         #;stopped? #f
          #;total total
          #;idle idle
          #;busy busy
@@ -187,7 +187,7 @@
     (log-resource-pool-debug "abandoned ~a" (~res res))
     (values
      (state
-      #;stopped #f
+      #;stopped? #f
       #;total (sub1 total)
       #;idle idle
       #;busy (remq res busy)
