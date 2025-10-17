@@ -4,6 +4,7 @@
   (require data/pool
            rackcheck
            racket/match
+           racket/promise
            rackunit
            rackunit/text-ui)
 
@@ -181,24 +182,64 @@
         (check-eq? res res2)
         (pool-release! p res))
 
-      (unless (getenv "CI")
-        (test-case "make-resource exn"
-          (define err-out (open-output-string))
-          (parameterize ([current-error-port err-out])
-            (define fail? #f)
-            (define p
-              (make-pool
-               (lambda ()
-                 (if fail?
-                     (error 'fail)
-                     (gensym)))))
-            (check-not-false (pool-take! p))
-            (set! fail? #t)
-            (check-false (sync/timeout 0.01 (pool-take!-evt p))))
-          (check-true
-           (regexp-match?
-            #rx"pool: error: fail"
-            (get-output-string err-out)))))
+      (test-case "make-resource can return an exn"
+        (define p
+          (make-pool
+           (lambda ()
+             (exn:fail "fail" (current-continuation-marks)))))
+        (define e (pool-take! p))
+        (check-not-false e)
+        (pool-release! p e)
+        (pool-close! p))
+
+      (test-case "make-resource can raise an exn"
+        (define fail? #f)
+        (define p
+          (make-pool
+           (lambda ()
+             (if fail?
+                 (error 'fail)
+                 (gensym)))))
+        (define v (pool-take! p))
+        (check-not-false v)
+        (set! fail? #t)
+        (check-exn
+         #rx"fail"
+         (lambda ()
+           (pool-take! p)))
+        (pool-release! p v)
+        (pool-close! p))
+
+      (test-case "make-resource raising an exn doesn't oversubscribe pool"
+        (define fail? #t)
+        (define p
+          (make-pool
+           #:max-size 1
+           (lambda ()
+             (if fail?
+                 (error 'fail)
+                 (gensym)))))
+        (check-exn
+         #rx"fail"
+         (lambda ()
+           (pool-take! p)))
+        (set! fail? #f)
+        (define e (pool-take! p 100))
+        (check-not-false e)
+        (pool-release! p e)
+        (pool-close! p))
+
+      (test-case "make-resource raising an exn doesn't oversubscribe pool 2"
+        (define p
+          (make-pool
+           #:max-size 1
+           (lambda ()
+             (error 'fail))))
+        (define t1 (delay/thread (pool-take! p)))
+        (define t2 (delay/thread (pool-take! p)))
+        (check-exn #rx"fail" (lambda () (force t1)))
+        (check-exn #rx"fail" (lambda () (force t2)))
+        (pool-close! p))
 
       (test-case "sync access"
         (define-property prop:sync

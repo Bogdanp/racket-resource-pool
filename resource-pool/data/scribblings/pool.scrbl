@@ -22,12 +22,15 @@ connections. Resource pools are both thread-safe and kill-safe.
 
   The @racket[make-pool] procedure returns a new @tech{resource pool}
   that lazily creates new resources using @racket[make-resource]. The
-  resulting pool can contain up to @racket[#:max-size] resources. The
-  @racket[make-resource] procedure @emph{must not} raise an exception.
+  resulting pool can contain up to @racket[#:max-size] resources.
 
   The @racket[#:idle-ttl] argument controls how long a resource can
   remain idle before @racket[destroy-resource] is applied to it and it
   is removed from the pool.
+
+  When @racket[make-resource] raises an exception, the exception
+  takes up one of the resource slots until it is handed off via
+  @racket[pool-take!-evt].
 }
 
 @defproc[(call-with-pool-resource [p pool?]
@@ -46,15 +49,19 @@ connections. Resource pools are both thread-safe and kill-safe.
 @defproc[(pool-take! [p pool?]
                      [timeout (or/c #f exact-nonnegative-integer?) #f]) (or/c #f any/c)]{
 
-  Waits for a resource to become available and then leases it
-  from @racket[p]. If the @racket[timeout] argument is provided,
-  the @racket[pool-take!] will block for at most @racket[timeout]
+  Waits for a resource to become available and then leases it from
+  @racket[p]. If the @racket[timeout] argument is provided, the
+  @racket[pool-take!] procedure will block for at most @racket[timeout]
   milliseconds before returning. On timeout, @racket[#f] is returned.
+
+  Raises an exception when synchronizing on an event returned by
+  @racket[pool-take!-evt] would raise an exception.
 }
 
 @defproc[(pool-take!-evt [p pool?]) evt?]{
-  Returns a synchronizable event that is ready for synchronization
-  when a pool resource becomes available.
+  Returns a synchronizable event that is ready for synchronization when
+  a pool resource becomes available. Synchronizing on the returned event
+  may raise an exception after a failed call to @racket[make-resource].
 
   @history[#:added "0.3"]
 }
@@ -66,8 +73,8 @@ connections. Resource pools are both thread-safe and kill-safe.
   from @racket[p], then an @racket[exn:fail:pool?] error is raised.
 }
 
-@defproc[(pool-abanon! [p pool?]
-                       [v any/c]) void?]{
+@defproc[(pool-abandon! [p pool?]
+                        [v any/c]) void?]{
   Destroys @racket[v] and releases it from the pool immediately.
   If @racket[v] was not leased from @racket[p], then an
   @racket[exn:fail:pool?] error is raised.

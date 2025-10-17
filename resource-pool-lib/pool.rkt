@@ -73,12 +73,16 @@
 
 (define (pool-take!-evt p)
   (match-define (pool impl) p)
-  (nack-guard-evt
-   (lambda (nack)
-     (define ch (make-channel))
-     (replace-evt
-      (actor:lease-evt impl ch nack)
-      (λ (_) ch)))))
+  (handle-evt
+   (nack-guard-evt
+    (lambda (nack)
+      (define ch (make-channel))
+      (replace-evt
+       (actor:lease-evt impl ch nack)
+       (λ (_) ch))))
+   (match-lambda
+     [(actor:err e) (raise e)]
+     [(actor:ok v) v])))
 
 (define (pool-release! p res)
   (actor:release (pool-impl p) res))
