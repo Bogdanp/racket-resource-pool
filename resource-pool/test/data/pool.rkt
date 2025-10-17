@@ -251,6 +251,14 @@
         (check-exn #rx"fail" (lambda () (force t2)))
         (pool-close! p))
 
+      (test-case "abandon"
+        (define p (make-pool gensym))
+        (define v1 (pool-take! p))
+        (pool-abandon! p v1)
+        (check-exn #rx"abandoned resource was never leased" (λ () (pool-abandon! p v1)))
+        (check-exn #rx"released resource was never leased" (λ () (pool-release! p v1)))
+        (pool-close! p))
+
       (test-case "sync access"
         (define-property prop:sync
           ([size (gen:integer-in 1 8)]
@@ -262,4 +270,22 @@
          (make-config
           #:tests (if (getenv "CI") 50 150)
           #:deadline (+ (current-inexact-milliseconds) (* 30 60 1000)))
-         prop:sync))))))
+         prop:sync))
+
+      (test-suite
+       "call-with-pool-resource"
+
+       (test-case "basic use"
+         (define p (make-pool #:max-size 1 gensym))
+         (check-not-false (call-with-pool-resource p values))
+         (pool-close! p))
+
+       (test-case "timeout"
+         (define p (make-pool #:max-size 1 gensym))
+         (define v (pool-take! p))
+         (check-exn
+          #rx"timed out while taking resource"
+          (lambda ()
+            (call-with-pool-resource p #:timeout 10 values)))
+         (pool-release! p v)
+         (pool-close! p)))))))

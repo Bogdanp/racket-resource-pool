@@ -164,53 +164,38 @@
   #:stopped? state-stopped?
 
   (define (lease st res-ch nack-evt)
-    (match-define (state _ total idle busy exns waiters promises deadlines) st)
+    (match-define (state _ _ _ _ _ waiters _ _) st)
     (define waiter (cons res-ch nack-evt))
     (values
-     (state
-      #;stopped? #f
-      #;total total
-      #;idle idle
-      #;busy busy
-      #;exns exns
-      #;waiters (cons waiter waiters)
-      #;promises promises
-      #;deadlines deadlines)
+     (struct-copy
+      state st
+      [waiters (cons waiter waiters)])
      (void)))
 
   (define (release st res)
-    (match-define (state _ total idle busy exns waiters promises deadlines) st)
+    (match-define (state _ _ idle busy _ _ _ deadlines) st)
     (unless (memq res busy)
       (oops "released resource was never leased: ~a" (~res res)))
     (log-resource-pool-debug "released ~a" (~res res))
     (values
-     (state
-      #;stopped? #f
-      #;total total
-      #;idle (cons res idle)
-      #;busy (remq res busy)
-      #;exns exns
-      #;waiters waiters
-      #;promises promises
-      #;deadlines (hash-set deadlines res (deadline idle-ttl)))
+     (struct-copy
+      state st
+      [idle (cons res idle)]
+      [busy (remq res busy)]
+      [deadlines (hash-set deadlines res (deadline idle-ttl))])
      (void)))
 
   (define (abandon st res)
-    (match-define (state _ total idle busy exns waiters promises deadlines) st)
+    (match-define (state _ total _ busy _ _ _ _) st)
     (unless (memq res busy)
       (oops "abandoned resource was never leased: ~a" (~res res)))
     (destroy-resource res)
     (log-resource-pool-debug "abandoned ~a" (~res res))
     (values
-     (state
-      #;stopped? #f
-      #;total (sub1 total)
-      #;idle idle
-      #;busy (remq res busy)
-      #;exns exns
-      #;waiters waiters
-      #;promises promises
-      #;deadlines deadlines)
+     (struct-copy
+      state st
+      [total (sub1 total)]
+      [busy (remq res busy)])
      (void)))
 
   (define (close st)
