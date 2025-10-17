@@ -97,7 +97,7 @@
                    (lambda (_)
                      ;; XXX: Avoid decrementing total until the exn is handed off to a waiter. That
                      ;; way, new resources cannot be created when the pool is full until exns are
-                     ;; handed off, thus ensuring better backoff.
+                     ;; handed off, thus ensuring better backpressure.
                      (with-handlers
                        ([exn:fail?
                          (lambda (e)
