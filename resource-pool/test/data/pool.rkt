@@ -146,6 +146,16 @@
          #rx"stopped"
          (λ () (pool-close! p))))
 
+      (test-case "provisioning"
+        (define p (make-pool #:max-size 2 gensym))
+        (define v0 (pool-take! p))
+        (check-not-false v0)
+        (define v1 (pool-take! p 100))
+        (check-not-false v1)
+        (pool-release! p v0)
+        (pool-release! p v1)
+        (pool-close! p))
+
       (test-case "kill safety"
         (define sema
           (make-semaphore))

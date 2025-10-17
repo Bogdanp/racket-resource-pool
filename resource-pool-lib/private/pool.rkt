@@ -37,20 +37,23 @@
             (lambda (st)
               (match-define (state _ total idle busy exns waiters promises deadlines) st)
               (define wanted (min max-size (length waiters)))
-              (define needed (max 0 (- wanted total)))
+              (define available (- total (length busy)))
+              (define shortage (- wanted available))
+              (define room (- max-size total))
+              (define needed (max 0 (min shortage room)))
               (define make-resources-evt
-                (if (positive? needed)
+                (if (zero? needed)
+                    never-evt
                     (handle-evt
                      always-evt
                      (lambda (_)
-                       (define the-promises
+                       (define these-promises
                          (for/list ([_ (in-range needed)])
                            (delay/thread (make-resource))))
                        (struct-copy
                         state st
                         [total (+ total needed)]
-                        [promises (append the-promises promises)])))
-                    never-evt))
+                        [promises (append these-promises promises)])))))
               (define idle-deadline-evt
                 (if (hash-empty? deadlines)
                     never-evt

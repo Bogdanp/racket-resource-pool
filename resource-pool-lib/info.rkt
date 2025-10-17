@@ -1,7 +1,7 @@
 #lang info
 
 (define license 'BSD-3-Clause)
-(define version "0.5")
+(define version "0.5.1")
 (define collection "data")
 (define deps
   '(["actor-lib" #:version "0.1.1"]
