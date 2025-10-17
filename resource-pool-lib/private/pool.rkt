@@ -39,8 +39,8 @@
               (define wanted (min max-size (length waiters)))
               (define available (- total (length busy)))
               (define shortage (- wanted available))
-              (define room (- max-size total))
-              (define needed (max 0 (min shortage room)))
+              (define capacity (- max-size total))
+              (define needed (max 0 (min shortage capacity)))
               (define make-resources-evt
                 (if (zero? needed)
                     never-evt
@@ -97,7 +97,7 @@
                    (lambda (_)
                      ;; XXX: Avoid decrementing total until the exn is handed off to a waiter. That
                      ;; way, new resources cannot be created when the pool is full until exns are
-                     ;; handed off, thus having better backoff.
+                     ;; handed off, thus ensuring better backoff.
                      (with-handlers
                        ([exn:fail?
                          (lambda (e)
