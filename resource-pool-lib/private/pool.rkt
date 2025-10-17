@@ -214,7 +214,7 @@
       #;exns null
       #;waiters null
       #;promises null
-      #;deadlines (make-hasheq))
+      #;deadlines (hasheq))
      (void))))
 
 (define (oops msg . args)
