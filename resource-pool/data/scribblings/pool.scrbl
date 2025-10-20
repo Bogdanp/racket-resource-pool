@@ -90,6 +90,23 @@ connections. Resource pools are both thread-safe and kill-safe.
   Raises an exception if @racket[p] has already been closed.
 }
 
+@defproc[(pool-stats [p pool?]) pool-stats?]{
+  Returns statistics about @racket[p].
+
+  @history[#:added "0.6"]
+}
+
+@defstruct[pool-stats ([open exact-nonnegative-integer?]
+                       [busy exact-nonnegative-integer?]
+                       [idle exact-nonnegative-integer?])
+           #:omit-constructor]{
+
+  A container for @tech{resource pool} statistics. May be expanded with
+  more fields in the future.
+
+  @history[#:added "0.6"]
+}
+
 @defproc[(exn:fail:pool? [v any/c]) boolean?]{
   Returns @racket[#t] when @racket[v] is a @tech{resource pool} error.
 }

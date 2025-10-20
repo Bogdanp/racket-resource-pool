@@ -7,7 +7,8 @@
 (provide
  exn:fail:pool?
  current-idle-timeout-slack
- pool lease-evt release abandon close oops
+ pool lease-evt release abandon get-stats close oops
+ (struct-out stats)
  (struct-out err)
  (struct-out ok))
 
@@ -18,7 +19,7 @@
 
 (struct exn:fail:pool exn:fail ())
 (struct state (stopped? total idle busy exns waiters promises deadlines))
-
+(struct stats (open busy idle))
 (struct err (e))
 (struct ok (v))
 
@@ -81,15 +82,11 @@
                                remaining-deadlines
                                n-destroyed)])))
                        (log-resource-pool-debug "expired ~s idle resource(s)" n-destroyed)
-                       (state
-                        #;stopped? #f
-                        #;total (- total n-destroyed)
-                        #;idle remaining-idle
-                        #;busy busy
-                        #;exns exns
-                        #;waiters waiters
-                        #;promises promises
-                        #;deadlines remaining-deadlines)))))
+                       (struct-copy
+                        state st
+                        [total (- total n-destroyed)]
+                        [idle remaining-idle]
+                        [deadlines remaining-deadlines])))))
               (define promise-evts
                 (for/list ([promise (in-list promises)])
                   (handle-evt
@@ -198,6 +195,15 @@
       [busy (remq res busy)])
      (void)))
 
+  (define (get-stats st)
+    (match-define (state _ total idle busy exns _ _ _) st)
+    (values
+     st
+     (stats
+      #;open (- total (length exns))
+      #;busy (length busy)
+      #;idle (length idle))))
+
   (define (close st)
     (match-define (state _ _ idle busy _ _ promises _) st)
     (unless (and (null? busy)
@@ -206,15 +212,16 @@
     (log-resource-pool-debug "destroying ~s idle resource(s)" (length idle))
     (for-each destroy-resource idle)
     (values
-     (state
-      #;stopped? #t
-      #;total 0
-      #;idle null
-      #;busy null
-      #;exns null
-      #;waiters null
-      #;promises null
-      #;deadlines (hasheq))
+     (struct-copy
+      state st
+      [stopped? #t]
+      [total 0]
+      [idle null]
+      [busy null]
+      [exns null]
+      [waiters null]
+      [promises null]
+      [deadlines (hasheq)])
      (void))))
 
 (define (oops msg . args)

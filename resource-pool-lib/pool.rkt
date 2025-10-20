@@ -9,6 +9,11 @@
          (prefix-in actor: "private/pool.rkt"))
 
 (provide
+ (rename-out
+  [actor:stats? pool-stats?]
+  [actor:stats-open pool-stats-open]
+  [actor:stats-busy pool-stats-busy]
+  [actor:stats-idle pool-stats-idle])
  (contract-out
   [exn:fail:pool?
    (-> any/c boolean?)]
@@ -32,6 +37,8 @@
    (-> pool? any/c void?)]
   [pool-close!
    (-> pool? void?)]
+  [pool-stats
+   (-> pool? actor:stats?)]
   [call-with-pool-resource
     (->* [pool? (-> any/c any)]
          [#:timeout (or/c #f exact-nonnegative-integer?)]
@@ -92,3 +99,6 @@
 
 (define (pool-close! p)
   (actor:close (pool-impl p)))
+
+(define (pool-stats p)
+  (actor:get-stats (pool-impl p)))
