@@ -82,14 +82,6 @@ connections. Resource pools are both thread-safe and kill-safe.
   @history[#:added "0.4"]
 }
 
-@defproc[(pool-close! [p pool?]) void?]{
-  Closes @racket[p]. If @racket[pool-close] is called before all
-  of the leased resources have been returned to the pool, an
-  @racket[exn:fail:pool?] error is raised and the pool remains open.
-
-  Raises an exception if @racket[p] has already been closed.
-}
-
 @defproc[(pool-stats [p pool?]) pool-stats?]{
   Returns statistics about @racket[p].
 
@@ -105,6 +97,14 @@ connections. Resource pools are both thread-safe and kill-safe.
   more fields in the future.
 
   @history[#:added "0.6"]
+}
+
+@defproc[(pool-close! [p pool?]) void?]{
+  Closes @racket[p]. If @racket[pool-close] is called before all
+  of the leased resources have been returned to the pool, an
+  @racket[exn:fail:pool?] error is raised and the pool remains open.
+
+  Raises an exception if @racket[p] has already been closed.
 }
 
 @defproc[(exn:fail:pool? [v any/c]) boolean?]{

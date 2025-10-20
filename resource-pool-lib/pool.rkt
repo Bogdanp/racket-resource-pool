@@ -35,10 +35,10 @@
    (-> pool? any/c void?)]
   [pool-abandon!
    (-> pool? any/c void?)]
-  [pool-close!
-   (-> pool? void?)]
   [pool-stats
    (-> pool? actor:stats?)]
+  [pool-close!
+   (-> pool? void?)]
   [call-with-pool-resource
     (->* [pool? (-> any/c any)]
          [#:timeout (or/c #f exact-nonnegative-integer?)]
@@ -97,8 +97,8 @@
 (define (pool-abandon! p res)
   (actor:abandon (pool-impl p) res))
 
-(define (pool-close! p)
-  (actor:close (pool-impl p)))
-
 (define (pool-stats p)
   (actor:get-stats (pool-impl p)))
+
+(define (pool-close! p)
+  (actor:close (pool-impl p)))
