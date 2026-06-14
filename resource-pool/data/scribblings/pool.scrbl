@@ -82,19 +82,17 @@ connections. Resource pools are both thread-safe and kill-safe.
   @history[#:added "0.4"]
 }
 
-@defproc[(pool-stats [p pool?]) pool-stats?]{
-  Returns statistics about @racket[p].
+@deftogether[(
+@defproc[(pool-stats [p pool?]) pool-stats?]
+@defproc[(pool-stats? [v any/c]) boolean?]
+@defproc[(pool-stats-open [ps pool-stats?]) exact-nonnegative-integer?]
+@defproc[(pool-stats-busy [ps pool-stats?]) exact-nonnegative-integer?]
+@defproc[(pool-stats-idle [ps pool-stats?]) exact-nonnegative-integer?]
+)]{
 
-  @history[#:added "0.6"]
-}
-
-@defstruct[pool-stats ([open exact-nonnegative-integer?]
-                       [busy exact-nonnegative-integer?]
-                       [idle exact-nonnegative-integer?])
-           #:omit-constructor]{
-
-  A container for @tech{resource pool} statistics. May be expanded with
-  more fields in the future.
+  The @racket[pool-stats] function returns statistics about @racket[p],
+  where @racket[pool-stats?] recognizes those results and the other functions
+  access specific fields.
 
   @history[#:added "0.6"]
 }
